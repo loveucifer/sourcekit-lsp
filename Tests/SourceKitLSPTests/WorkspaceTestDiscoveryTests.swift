@@ -1124,6 +1124,60 @@ final class WorkspaceTestDiscoveryTests: SourceKitLSPTestCase {
     let tests = try await project.testClient.send(WorkspaceTestsRequest())
     XCTAssertEqual(tests, [])
   }
+
+  // test xctest extension with multiple methods should not disambiguate ids
+  func testXCTestExtensionWithMultipleMethodsAndBackgroundIndexing() async throws {
+    try SkipUnless.longTestsEnabled()
+
+    let project = try await SwiftPMTestProject(
+      files: [
+        "Tests/MyLibraryTests/MyTests.swift": """
+        import XCTest
+        final class 1️⃣MyTests: XCTestCase {}
+
+        extension MyTests {
+          func 2️⃣testOne() {}
+          func 3️⃣testOneTwo() {}
+        }
+        """
+      ],
+      manifest: packageManifestWithTestTarget,
+      enableBackgroundIndexing: true
+    )
+
+    let tests = try await project.testClient.send(WorkspaceTestsRequest())
+    XCTAssertEqual(
+      tests,
+      [
+        TestItem(
+          id: "MyLibraryTests.MyTests",
+          label: "MyTests",
+          location: Location(
+            uri: try project.uri(for: "MyTests.swift"),
+            range: Range(try project.position(of: "1️⃣", in: "MyTests.swift"))
+          ),
+          children: [
+            TestItem(
+              id: "MyLibraryTests.MyTests/testOne()",
+              label: "testOne()",
+              location: Location(
+                uri: try project.uri(for: "MyTests.swift"),
+                range: Range(try project.position(of: "2️⃣", in: "MyTests.swift"))
+              )
+            ),
+            TestItem(
+              id: "MyLibraryTests.MyTests/testOneTwo()",
+              label: "testOneTwo()",
+              location: Location(
+                uri: try project.uri(for: "MyTests.swift"),
+                range: Range(try project.position(of: "3️⃣", in: "MyTests.swift"))
+              )
+            ),
+          ]
+        )
+      ]
+    )
+  }
 }
 
 extension TestItem {

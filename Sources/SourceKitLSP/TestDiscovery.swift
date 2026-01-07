@@ -106,6 +106,9 @@ extension SourceKitLSPServer {
 
     var testSymbolUsrs = Set(testSymbolOccurrences.map(\.symbol.usr))
 
+    // cache to map extension usrs to the class they extend (when class is in scope)
+    var extensionToClassUsr: [String: String] = [:]
+
     // Gather any extension declarations that contains tests and add them to `occurrencesByParent` so we can properly
     // arrange their test items as the extension's children.
     for testSymbolOccurrence in testSymbolOccurrences {
@@ -113,6 +116,16 @@ extension SourceKitLSPServer {
         guard parentSymbol.kind == .extension else {
           continue
         }
+        // find the class this extension extends
+        if let extendedSymbol = index?.occurrences(relatedToUSR: parentSymbol.usr, roles: .extendedBy).first?.symbol {
+          // if the class is already in testSymbolUsrs from this request,
+          // map extension to class so tests parent correctly
+          if testSymbolUsrs.contains(extendedSymbol.usr) {
+            extensionToClassUsr[parentSymbol.usr] = extendedSymbol.usr
+            continue
+          }
+        }
+        // fallback: use extension as root if class not in scope
         guard let definition = index?.primaryDefinitionOrDeclarationOccurrence(ofUSR: parentSymbol.usr) else {
           logger.fault("Unable to find primary definition of extension '\(parentSymbol.usr)' containing tests")
           continue
@@ -123,8 +136,11 @@ extension SourceKitLSPServer {
     }
 
     for testSymbolOccurrence in testSymbolOccurrences {
-      let childOfUsrs = testSymbolOccurrence.relations
-        .filter { $0.roles.contains(.childOf) }.map(\.symbol.usr).filter { testSymbolUsrs.contains($0) }
+      let childOfRelations = testSymbolOccurrence.relations.filter { $0.roles.contains(.childOf) }
+      // resolve extension usrs to class usrs if class is in scope
+      let childOfUsrs = childOfRelations.map {
+        extensionToClassUsr[$0.symbol.usr] ?? $0.symbol.usr
+      }.filter { testSymbolUsrs.contains($0) }
       if childOfUsrs.count > 1 {
         logger.fault(
           "Test symbol \(testSymbolOccurrence.symbol.usr) is child or multiple symbols: \(childOfUsrs.joined(separator: ", "))"
